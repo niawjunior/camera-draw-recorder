@@ -1,4 +1,4 @@
-# CameraDrawRecorderNosync
+# CameraDrawRecorder
 
 
 https://github.com/user-attachments/assets/caef2a2b-27a1-4556-8743-107d66b6db31
