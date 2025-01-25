@@ -4,6 +4,10 @@
 https://github.com/user-attachments/assets/caef2a2b-27a1-4556-8743-107d66b6db31
 
 
+https://github.com/user-attachments/assets/64af482d-2838-4a2a-b785-83b573ebf125
+
+
+
 This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 18.0.3.
 
 ## Development server
