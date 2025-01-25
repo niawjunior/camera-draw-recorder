@@ -6,6 +6,7 @@
   <canvas #videoCanvas class="absolute w-80 h-60"></canvas>
 
   <!-- Drawing canvas -->
+
   <canvas
     #drawingCanvas
     class="absolute w-80 h-60"
@@ -17,6 +18,16 @@
 
   <!-- Controls -->
   <div class="space-x-4 absolute bottom-[400px]">
+    <div>
+      <label for="colorPicker">Choose a color:</label>
+      <input
+        type="color"
+        id="colorPicker"
+        [(ngModel)]="selectedColor"
+        (change)="updateDrawingColor($event)"
+      />
+    </div>
+
     @if (!isRecording) {
     <button
       (click)="startRecording()"
@@ -24,7 +35,21 @@
     >
       Start Recording
     </button>
-    } @if (isRecording) {
+    } @if(isRecording) {
+    <button
+      (click)="pauseRecording()"
+      class="px-4 py-2 bg-yellow-500 text-white rounded"
+    >
+      Pause Recording
+    </button>
+    } @if (!isRecording && isPaused) {
+    <button
+      (click)="resumeRecording()"
+      class="px-4 py-2 bg-purple-500 text-white rounded"
+    >
+      Resume Recording
+    </button>
+    } @if (isRecording || isPaused) {
     <button
       (click)="stopRecording()"
       class="px-4 py-2 bg-red-500 text-white rounded"
@@ -37,6 +62,10 @@
       class="px-4 py-2 bg-green-500 text-white rounded"
     >
       Save Recording
+    </button>
+
+    <button class="px-4 py-2 bg-red-500 text-white rounded" (click)="clearDB()">
+      Clear DB
     </button>
   </div>
   <video
