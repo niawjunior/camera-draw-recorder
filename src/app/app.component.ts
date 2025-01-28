@@ -7,6 +7,18 @@ import { FormsModule } from '@angular/forms';
 const DB_NAME = 'recordingDB';
 const STORE_NAME = 'recordingParts';
 
+interface Shape {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  isSelected: boolean;
+  isResizing: boolean;
+  type: 'square' | 'rectangle' | 'free';
+  points?: { x: number; y: number }[]; // For free draw mode
+}
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
@@ -24,17 +36,24 @@ export class AppComponent implements OnInit {
   @ViewChild('previewVideo', { static: true })
   previewVideoElement!: ElementRef<HTMLVideoElement>;
   isRecording = false;
-
+  selectedShape: string = 'free'; // Default to free draw
   isPaused = false; // Flag to track whether recording is paused
   recordingParts: Blob[] = []; // Store parts of the recording
   selectedColor: string = '#ff0000'; // Default to red
+  private undoStack: Shape[][] = [];
+  private redoStack: Shape[][] = [];
 
   private stream!: MediaStream;
   private recorder!: RecordRTC;
   private isDrawing = false;
+  private isDragging = false;
+  private isResizing = false;
+  private selectedShapeIndex: number | null = null;
+  private shapes: Shape[] = [];
   private videoContext!: CanvasRenderingContext2D;
   private drawingContext!: CanvasRenderingContext2D;
-
+  private startX = 0;
+  private startY = 0;
   async ngOnInit() {
     this.initializeCamera();
 
@@ -245,42 +264,183 @@ export class AppComponent implements OnInit {
     await this.clearDB(); // Clear IndexedDB after saving
     console.log('Recording saved as WebM and IndexedDB cleared.');
   }
+
   startDrawing(event: MouseEvent) {
-    this.isDrawing = true;
-
-    const drawingCanvas = this.drawingCanvasElement.nativeElement;
-    const rect = drawingCanvas.getBoundingClientRect();
-
-    const x = ((event.clientX - rect.left) / rect.width) * drawingCanvas.width;
-    const y = ((event.clientY - rect.top) / rect.height) * drawingCanvas.height;
-
-    this.drawingContext.beginPath();
-    this.drawingContext.moveTo(x, y); // Start the path at the initial mouse position
-  }
-
-  draw(event: MouseEvent) {
-    if (!this.isDrawing) return;
-
     const rect =
       this.drawingCanvasElement.nativeElement.getBoundingClientRect();
-    const x =
+    this.startX =
       ((event.clientX - rect.left) / rect.width) *
       this.drawingCanvasElement.nativeElement.width;
-    const y =
+    this.startY =
       ((event.clientY - rect.top) / rect.height) *
       this.drawingCanvasElement.nativeElement.height;
 
-    this.drawingContext.lineTo(x, y);
-    this.drawingContext.strokeStyle = this.selectedColor; // Use the selected color
-    this.drawingContext.lineWidth = 2; // Adjust line width if needed
-    this.drawingContext.stroke();
-  }
-  stopDrawing() {
-    if (this.isDrawing) {
-      this.isDrawing = false;
-      this.drawingContext.closePath(); // Finalize the path
+    this.saveStateToUndoStack();
+
+    this.selectedShapeIndex = this.findShapeAtPosition(
+      this.startX,
+      this.startY
+    );
+    if (this.selectedShapeIndex !== null) {
+      this.isDragging = true;
+    } else {
+      this.isDrawing = true;
+
+      if (
+        this.selectedShape === 'square' ||
+        this.selectedShape === 'rectangle'
+      ) {
+        this.shapes.push({
+          x: this.startX,
+          y: this.startY,
+          width: 0,
+          height: 0,
+          color: this.selectedColor,
+          isSelected: true,
+          isResizing: false,
+          type: this.selectedShape,
+        });
+      } else {
+        this.shapes.push({
+          x: this.startX,
+          y: this.startY,
+          width: 0,
+          height: 0,
+          color: this.selectedColor,
+          isSelected: true,
+          isResizing: false,
+          type: 'free',
+          points: [{ x: this.startX, y: this.startY }],
+        });
+      }
     }
   }
+
+  draw(event: MouseEvent) {
+    if (!this.isDrawing && !this.isDragging) return;
+
+    const rect =
+      this.drawingCanvasElement.nativeElement.getBoundingClientRect();
+    const currentX =
+      ((event.clientX - rect.left) / rect.width) *
+      this.drawingCanvasElement.nativeElement.width;
+    const currentY =
+      ((event.clientY - rect.top) / rect.height) *
+      this.drawingCanvasElement.nativeElement.height;
+
+    if (this.isDragging && this.selectedShapeIndex !== null) {
+      const shape = this.shapes[this.selectedShapeIndex];
+      shape.x += currentX - this.startX;
+      shape.y += currentY - this.startY;
+      this.startX = currentX;
+      this.startY = currentY;
+    } else if (this.isDrawing) {
+      if (
+        this.selectedShape === 'square' ||
+        this.selectedShape === 'rectangle'
+      ) {
+        const shape = this.shapes[this.shapes.length - 1];
+        shape.width = Math.abs(currentX - shape.x);
+        shape.height =
+          this.selectedShape === 'square'
+            ? shape.width
+            : Math.abs(currentY - shape.y);
+      } else {
+        this.shapes[this.shapes.length - 1].points!.push({
+          x: currentX,
+          y: currentY,
+        });
+      }
+    }
+
+    this.redrawCanvas();
+  }
+
+  stopDrawing(event: MouseEvent) {
+    this.isDrawing = false;
+    this.isDragging = false;
+  }
+
+  private findShapeAtPosition(x: number, y: number): number | null {
+    for (let i = this.shapes.length - 1; i >= 0; i--) {
+      const shape = this.shapes[i];
+      if (shape.type === 'square' || shape.type === 'rectangle') {
+        if (
+          x >= shape.x &&
+          x <= shape.x + shape.width &&
+          y >= shape.y &&
+          y <= shape.y + shape.height
+        ) {
+          return i;
+        }
+      }
+    }
+    return null;
+  }
+
+  redrawCanvas() {
+    this.drawingContext.clearRect(
+      0,
+      0,
+      this.drawingCanvasElement.nativeElement.width,
+      this.drawingCanvasElement.nativeElement.height
+    );
+
+    for (const shape of this.shapes) {
+      this.drawingContext.strokeStyle = shape.color;
+      this.drawingContext.lineWidth = 2;
+
+      if (shape.type === 'square' || shape.type === 'rectangle') {
+        this.drawingContext.strokeRect(
+          shape.x,
+          shape.y,
+          shape.width,
+          shape.height
+        );
+      } else {
+        this.drawingContext.beginPath();
+        shape.points!.forEach((point, index) => {
+          if (index === 0) {
+            this.drawingContext.moveTo(point.x, point.y);
+          } else {
+            this.drawingContext.lineTo(point.x, point.y);
+          }
+        });
+        this.drawingContext.stroke();
+      }
+    }
+  }
+
+  undo() {
+    if (this.shapes.length > 0) {
+      this.redoStack.push([...this.shapes]);
+      this.shapes.pop();
+      this.redrawCanvas();
+    }
+  }
+  /** REDO FUNCTION **/
+  /** REDO FUNCTION **/
+  redo() {
+    if (this.redoStack.length > 0) {
+      this.shapes = this.redoStack.pop()!;
+      this.redrawCanvas();
+    }
+  }
+
+  private saveStateToUndoStack() {
+    this.undoStack.push([...this.shapes]);
+    this.redoStack = []; // Clear redo stack on new action
+  }
+
+  /** HANDLE KEY PRESS EVENTS **/
+  handleKeyPress(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
+      this.undo();
+    } else if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
+      this.redo();
+    }
+  }
+
   pauseRecording() {
     this.isPaused = true;
     this.isRecording = false;

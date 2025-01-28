@@ -6,14 +6,13 @@
   <canvas #videoCanvas class="absolute w-80 h-60"></canvas>
 
   <!-- Drawing canvas -->
-
   <canvas
     #drawingCanvas
     class="absolute w-80 h-60"
     (mousedown)="startDrawing($event)"
     (mousemove)="draw($event)"
-    (mouseup)="stopDrawing()"
-    (mouseleave)="stopDrawing()"
+    (mouseup)="stopDrawing($event)"
+    (mouseleave)="stopDrawing($event)"
   ></canvas>
 
   <!-- Controls -->
@@ -28,6 +27,44 @@
       />
     </div>
 
+    <div class="absolute top-[100px] gap-2 w-full flex justify-center">
+      <div class="space-x-4 flex">
+        <label>Drawing Mode:</label>
+        <button
+          class="px-4 py-2 bg-blue-500 text-white rounded"
+          (click)="selectedShape = 'free'"
+        >
+          Free Draw
+        </button>
+        <button
+          class="px-4 py-2 bg-blue-500 text-white rounded"
+          (click)="selectedShape = 'square'"
+        >
+          Square
+        </button>
+        <button
+          class="px-4 py-2 bg-blue-500 text-white rounded"
+          (click)="selectedShape = 'rectangle'"
+        >
+          Rectangle
+        </button>
+      </div>
+
+      <div class="flex gap-2">
+        <button
+          class="px-4 py-2 bg-gray-500 text-white rounded"
+          (click)="undo()"
+        >
+          Undo (Ctrl+Z)
+        </button>
+        <button
+          class="px-4 py-2 bg-gray-500 text-white rounded"
+          (click)="redo()"
+        >
+          Redo (Ctrl+Y)
+        </button>
+      </div>
+    </div>
     @if (!isRecording) {
     <button
       (click)="startRecording()"
@@ -70,7 +107,7 @@
   </div>
   <video
     #previewVideo
-    class="w-80 h-60 absolute top-[400px] border"
+    class="w-80 h-60 absolute top-[470px] border"
     controls
   ></video>
 </div>
