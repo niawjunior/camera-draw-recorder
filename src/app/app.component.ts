@@ -1,5 +1,7 @@
 import { Component, ElementRef, OnInit, ViewChild } from '@angular/core';
 import RecordRTC from 'recordrtc';
+import { Peer } from 'peerjs';
+
 import { openDB } from 'idb';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -27,6 +29,11 @@ interface Shape {
   imports: [CommonModule, FormsModule],
 })
 export class AppComponent implements OnInit {
+  @ViewChild('remoteVideo', { static: true })
+  remoteVideoElement!: ElementRef<HTMLVideoElement>;
+  userIdToCall: string = ''; // Input for calling user ID
+  isMuted = false; // Mute toggle state
+
   @ViewChild('video', { static: true })
   videoElement!: ElementRef<HTMLVideoElement>;
   @ViewChild('videoCanvas', { static: true })
@@ -42,7 +49,14 @@ export class AppComponent implements OnInit {
   selectedColor: string = '#ff0000'; // Default to red
   private undoStack: Shape[][] = [];
   private redoStack: Shape[][] = [];
-
+  peer!: Peer;
+  call!: any;
+  agentPeerId: string = '';
+  localStream!: MediaStream;
+  remoteStream!: MediaStream;
+  private audioContext!: AudioContext;
+  private remoteAudioSource!: MediaStreamAudioSourceNode;
+  private remoteAudioOutput!: MediaStreamAudioDestinationNode;
   private stream!: MediaStream;
   private recorder!: RecordRTC;
   private isDrawing = false;
@@ -84,6 +98,74 @@ export class AppComponent implements OnInit {
     }
   }
 
+  initializePeer() {
+    this.peer = new Peer(); // Generate unique ID for agent
+
+    this.peer.on('open', (id) => {
+      console.log('My Peer ID:', id);
+      this.agentPeerId = id;
+      // Share this ID with the user to start the call
+    });
+
+    this.peer.on('call', (call) => {
+      navigator.mediaDevices
+        .getUserMedia({ video: true, audio: true })
+        .then((stream) => {
+          this.localStream = stream;
+          call.answer(stream);
+
+          call.on('stream', (remoteStream) => {
+            this.remoteStream = remoteStream;
+
+            this.remoteAudioSource =
+              this.audioContext.createMediaStreamSource(remoteStream);
+            this.remoteAudioOutput =
+              this.audioContext.createMediaStreamDestination();
+            this.remoteAudioSource.connect(this.audioContext.destination);
+
+            const remoteVideo = this.remoteVideoElement.nativeElement;
+            remoteVideo.srcObject = remoteStream;
+            remoteVideo.muted = true; // 🔇 Only mute video element, but NOT the stream audio
+          });
+        });
+      this.call = call;
+    });
+  }
+  callUser(userId: string) {
+    if (!userId.trim()) {
+      console.warn('User ID is required to initiate a call.');
+      return;
+    }
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        this.localStream = stream;
+        this.videoElement.nativeElement.srcObject = stream;
+
+        this.call = this.peer.call(userId, stream);
+        this.call.on('stream', (remoteStream: MediaStream) => {
+          this.remoteStream = remoteStream;
+          // ✅ Route Remote Audio Correctly
+          this.remoteAudioSource =
+            this.audioContext.createMediaStreamSource(remoteStream);
+          this.remoteAudioSource.connect(this.audioContext.destination);
+
+          // ✅ Mute Remote Video to Prevent Feedback
+          const remoteVideo = this.remoteVideoElement.nativeElement;
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.muted = true; // 🔇 Only mute video, not audio
+        });
+      });
+  }
+
+  endCall() {
+    if (this.call) {
+      this.call.close();
+      this.videoElement.nativeElement.srcObject = null;
+      this.remoteVideoElement.nativeElement.srcObject = null;
+    }
+  }
+
   updateDrawingColor(event: Event) {
     const colorInput = event.target as HTMLInputElement;
     this.selectedColor = colorInput.value;
@@ -116,6 +198,9 @@ export class AppComponent implements OnInit {
           this.drawingContext = drawingCanvas.getContext('2d')!;
 
           this.renderVideoOnCanvas();
+
+          this.initializePeer();
+          this.audioContext = new AudioContext();
         };
       })
       .catch((err) => console.error('Error accessing camera:', err));
@@ -143,72 +228,97 @@ export class AppComponent implements OnInit {
     this.isRecording = true;
 
     const videoCanvas = this.videoCanvasElement.nativeElement;
+    const videoContext = videoCanvas.getContext('2d')!;
     const drawingCanvas = this.drawingCanvasElement.nativeElement;
+    const drawingContext = drawingCanvas.getContext('2d')!;
 
-    // Combine video and drawing layers
-    const combinedCanvas = document.createElement('canvas');
-    combinedCanvas.width = videoCanvas.width;
-    combinedCanvas.height = videoCanvas.height;
-    const combinedContext = combinedCanvas.getContext('2d')!;
+    videoCanvas.width = 640;
+    videoCanvas.height = 480;
 
-    const mergeLayers = () => {
-      combinedContext.drawImage(videoCanvas, 0, 0);
-      combinedContext.drawImage(drawingCanvas, 0, 0);
-      requestAnimationFrame(mergeLayers);
+    const localVideo = this.videoElement.nativeElement;
+    const remoteVideo = this.remoteVideoElement.nativeElement;
+
+    // 🔥 FIX: Disable direct rendering on drawing canvas during recording
+    drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+    const renderFrame = () => {
+      // ✅ FIX: Clear the video canvas first to prevent overlapping frames
+      videoContext.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+
+      // ✅ Draw Local Video (Full Size)
+      videoContext.drawImage(
+        localVideo,
+        0,
+        0,
+        videoCanvas.width,
+        videoCanvas.height
+      );
+
+      // ✅ Draw Remote Video (Small - Top Right)
+      const smallVideoWidth = 160;
+      const smallVideoHeight = 120;
+      videoContext.drawImage(
+        remoteVideo,
+        videoCanvas.width - smallVideoWidth - 10,
+        10,
+        smallVideoWidth,
+        smallVideoHeight
+      );
+
+      // ✅ FIX: Draw the drawing canvas **only once** onto the video canvas
+      videoContext.drawImage(
+        drawingCanvas,
+        0,
+        0,
+        videoCanvas.width,
+        videoCanvas.height
+      );
+
+      requestAnimationFrame(renderFrame);
     };
-    mergeLayers();
 
-    // 🎙️ Capture Audio from Microphone
-    const audioStream = await navigator.mediaDevices.getUserMedia({
+    renderFrame();
+
+    // 🎙️ Mix Audio Streams
+    const micStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
     });
 
-    // 🌍 Detect Safari
-    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    let finalStream;
+    if (this.localStream && this.remoteStream) {
+      const mixedAudioStream = this.audioContext.createMediaStreamDestination();
+      const localAudio = this.audioContext.createMediaStreamSource(
+        this.localStream
+      );
+      const remoteAudio = this.audioContext.createMediaStreamSource(
+        this.remoteStream
+      );
 
-    // 🖥️ Capture Video Stream
-    let videoStream: MediaStream;
-    if (typeof combinedCanvas.captureStream === 'function') {
-      videoStream = combinedCanvas.captureStream();
+      localAudio.connect(mixedAudioStream);
+      remoteAudio.connect(mixedAudioStream);
+
+      finalStream = new MediaStream([
+        ...videoCanvas.captureStream().getVideoTracks(),
+        ...mixedAudioStream.stream.getAudioTracks(),
+      ]);
     } else {
-      console.warn('captureStream() not supported. Using toBlob() fallback.');
-      combinedCanvas.toBlob((blob) => {
-        if (blob) {
-          this.savePartToDB(blob);
-        }
-      }, 'video/mp4');
-      return;
+      finalStream = new MediaStream([
+        ...videoCanvas.captureStream().getVideoTracks(),
+        ...micStream.getTracks(),
+      ]);
     }
 
-    // ✅ Synchronize Audio with Video Using AudioContext (Fix for Safari)
-    const audioContext = new AudioContext();
-    const mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
-    const destination = audioContext.createMediaStreamDestination();
-    mediaStreamSource.connect(destination);
-
-    // ✅ Merge Video & Audio Streams
-    const combinedStream = new MediaStream([
-      ...videoStream.getVideoTracks(),
-      ...destination.stream.getAudioTracks(),
-    ]);
-
-    // ✅ Use correct MIME type
-    const mimeType = isSafari ? 'video/mp4' : 'video/webm;codecs=vp8';
-
-    // ✅ Initialize Recorder
-    this.recorder = new RecordRTC(combinedStream, {
+    this.recorder = new RecordRTC(finalStream, {
       type: 'video',
-      mimeType,
+      mimeType: 'video/webm;codecs=vp8',
       timeSlice: 3000,
-      ondataavailable: async (blob: Blob) => {
+      ondataavailable: async (blob) => {
         if (blob && blob.size > 0) {
-          console.log('Chunk received. Blob size:', blob.size);
           await this.savePartToDB(blob);
         }
       },
     });
 
-    console.log('Recorder started with MIME type:', mimeType);
     this.recorder.startRecording();
   }
 
@@ -600,5 +710,14 @@ export class AppComponent implements OnInit {
     });
     await db.clear(STORE_NAME);
     window.location.reload();
+  }
+
+  toggleMute() {
+    if (this.localStream) {
+      this.isMuted = !this.isMuted;
+      this.localStream
+        .getAudioTracks()
+        .forEach((track) => (track.enabled = !this.isMuted));
+    }
   }
 }

@@ -1,34 +1,62 @@
 <div class="flex flex-col items-center space-y-4 p-4">
-  <!-- Hidden video for camera feed -->
-  <video #video autoplay muted class="hidden"></video>
+  <!-- Local Video (Agent) with Drawing Canvas -->
+  <div class="relative w-[640px] h-[480px]">
+    <h2 class="text-lg font-bold text-center">Your Camera</h2>
+    <video #video autoplay playsinline class="w-full h-full absolute"></video>
+    <canvas #videoCanvas class="absolute w-full h-full"></canvas>
+    <canvas
+      #drawingCanvas
+      class="absolute w-full h-full"
+      (mousedown)="startDrawing($event)"
+      (mousemove)="draw($event)"
+      (mouseup)="stopDrawing($event)"
+      (mouseleave)="stopDrawing($event)"
+    ></canvas>
 
-  <!-- Video rendering canvas -->
-  <canvas #videoCanvas class="absolute w-80 h-60"></canvas>
-
-  <!-- Drawing canvas -->
-  <canvas
-    #drawingCanvas
-    class="absolute w-80 h-60"
-    (mousedown)="startDrawing($event)"
-    (mousemove)="draw($event)"
-    (mouseup)="stopDrawing($event)"
-    (mouseleave)="stopDrawing($event)"
-  ></canvas>
+    <!-- ✅ Small Remote Video (User) in Top-Right -->
+    <video
+      #remoteVideo
+      autoplay
+      playsinline
+      class="absolute top-[30px] right-[0] w-40 h-30 border"
+    ></video>
+  </div>
 
   <!-- Controls -->
-  <div class="space-x-4 absolute bottom-[400px]">
-    <div>
-      <label for="colorPicker">Choose a color:</label>
+  <div class="flex flex-col items-center space-y-4 mt-4">
+    <span class="text-sm mt-[20px]">Your Peer ID: {{ agentPeerId }}</span>
+
+    <!-- Call Controls -->
+    <div class="flex space-x-4">
       <input
-        type="color"
-        id="colorPicker"
-        [(ngModel)]="selectedColor"
-        (change)="updateDrawingColor($event)"
+        type="text"
+        placeholder="Enter User ID to Call"
+        [(ngModel)]="userIdToCall"
+        class="border px-2 py-1"
       />
+      <button
+        (click)="callUser(userIdToCall)"
+        class="px-4 py-2 bg-green-500 text-white rounded"
+      >
+        Start Call
+      </button>
+      <button
+        (click)="endCall()"
+        class="px-4 py-2 bg-red-500 text-white rounded"
+      >
+        End Call
+      </button>
+      <button
+        (click)="toggleMute()"
+        class="px-4 py-2 bg-gray-500 text-white rounded"
+      >
+        Toggle Mute
+      </button>
     </div>
 
-    <div class="absolute top-[100px] gap-2 w-full flex justify-center">
-      <div class="space-x-4 flex">
+    <!-- Drawing Controls -->
+    <div class="flex flex-wrap justify-center space-x-4">
+      <div class="space-x-2">
         <label>Drawing Mode:</label>
         <button
           class="px-4 py-2 bg-blue-500 text-white rounded"
@@ -50,7 +78,7 @@
         </button>
       </div>
 
-      <div class="flex gap-2">
+      <div class="space-x-2">
         <button
           class="px-4 py-2 bg-gray-500 text-white rounded"
           (click)="undo()"
@@ -65,49 +93,66 @@
         </button>
       </div>
     </div>
-    @if (!isRecording) {
-    <button
-      (click)="startRecording()"
-      class="px-4 py-2 bg-blue-500 text-white rounded"
-    >
-      Start Recording
-    </button>
-    } @if(isRecording) {
-    <button
-      (click)="pauseRecording()"
-      class="px-4 py-2 bg-yellow-500 text-white rounded"
-    >
-      Pause Recording
-    </button>
-    } @if (!isRecording && isPaused) {
-    <button
-      (click)="resumeRecording()"
-      class="px-4 py-2 bg-purple-500 text-white rounded"
-    >
-      Resume Recording
-    </button>
-    } @if (isRecording || isPaused) {
-    <button
-      (click)="stopRecording()"
-      class="px-4 py-2 bg-red-500 text-white rounded"
-    >
-      Stop Recording
-    </button>
-    }
-    <button
-      (click)="saveRecording()"
-      class="px-4 py-2 bg-green-500 text-white rounded"
-    >
-      Save Recording
-    </button>
 
-    <button class="px-4 py-2 bg-red-500 text-white rounded" (click)="clearDB()">
-      Clear DB
-    </button>
+    <!-- Recording Controls -->
+    <div class="flex flex-wrap justify-center space-x-4">
+      <div>
+        <label for="colorPicker">Choose a color:</label>
+        <input
+          type="color"
+          id="colorPicker"
+          [(ngModel)]="selectedColor"
+          (change)="updateDrawingColor($event)"
+        />
+      </div>
+
+      @if (!isRecording) {
+      <button
+        (click)="startRecording()"
+        class="px-4 py-2 bg-blue-500 text-white rounded"
+      >
+        Start Recording
+      </button>
+      } @if(isRecording) {
+      <button
+        (click)="pauseRecording()"
+        class="px-4 py-2 bg-yellow-500 text-white rounded"
+      >
+        Pause Recording
+      </button>
+      } @if (!isRecording && isPaused) {
+      <button
+        (click)="resumeRecording()"
+        class="px-4 py-2 bg-purple-500 text-white rounded"
+      >
+        Resume Recording
+      </button>
+      } @if (isRecording || isPaused) {
+      <button
+        (click)="stopRecording()"
+        class="px-4 py-2 bg-red-500 text-white rounded"
+      >
+        Stop Recording
+      </button>
+      }
+
+      <button
+        (click)="saveRecording()"
+        class="px-4 py-2 bg-green-500 text-white rounded"
+      >
+        Save Recording
+      </button>
+
+      <button
+        class="px-4 py-2 bg-red-500 text-white rounded"
+        (click)="clearDB()"
+      >
+        Clear DB
+      </button>
+    </div>
+
+    <!-- Recording Preview -->
+    <h2 class="text-lg font-bold mt-4">Recording Preview</h2>
+    <video #previewVideo class="w-80 h-30 border" controls></video>
   </div>
-  <video
-    #previewVideo
-    class="w-80 h-60 absolute top-[470px] border"
-    controls
-  ></video>
 </div>
