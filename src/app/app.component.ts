@@ -93,7 +93,7 @@ export class AppComponent implements OnInit {
 
   initializeCamera() {
     navigator.mediaDevices
-      .getUserMedia({ video: true, audio: false })
+      .getUserMedia({ video: true, audio: true })
       .then((stream) => {
         this.stream = stream;
 
@@ -141,6 +141,7 @@ export class AppComponent implements OnInit {
 
   async startRecording() {
     this.isRecording = true;
+
     const videoCanvas = this.videoCanvasElement.nativeElement;
     const drawingCanvas = this.drawingCanvasElement.nativeElement;
 
@@ -150,7 +151,6 @@ export class AppComponent implements OnInit {
     combinedCanvas.height = videoCanvas.height;
     const combinedContext = combinedCanvas.getContext('2d')!;
 
-    // Merge video and drawing layers during recording
     const mergeLayers = () => {
       combinedContext.drawImage(videoCanvas, 0, 0);
       combinedContext.drawImage(drawingCanvas, 0, 0);
@@ -158,32 +158,50 @@ export class AppComponent implements OnInit {
     };
     mergeLayers();
 
-    // Capture combined canvas stream for recording
-    const videoStream = combinedCanvas.captureStream();
+    // 🎙️ Capture audio from microphone
     const audioStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
     });
+
+    let videoStream: MediaStream;
+
+    // 🚨 Safari Fix: Check if `captureStream()` is supported
+    if (typeof combinedCanvas.captureStream === 'function') {
+      videoStream = combinedCanvas.captureStream();
+    } else {
+      console.warn('captureStream() not supported. Using toBlob() fallback.');
+      combinedCanvas.toBlob((blob) => {
+        if (blob) {
+          this.savePartToDB(blob);
+        }
+      }, 'video/mp4'); // Fallback to MP4
+      return;
+    }
+
+    // ✅ Merge video & audio streams
     const combinedStream = new MediaStream([
       ...videoStream.getVideoTracks(),
       ...audioStream.getAudioTracks(),
     ]);
 
-    // Set up the recorder with `ondataavailable`
+    // ✅ Use different MIME types for Safari & Chrome/Firefox
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const mimeType = isSafari ? 'video/mp4' : 'video/webm;codecs=vp8';
+
+    // ✅ Initialize the recorder
     this.recorder = new RecordRTC(combinedStream, {
       type: 'video',
-      mimeType: 'video/webm;codecs=vp8',
-      timeSlice: 3000, // Capture chunks every second
+      mimeType, // ✅ Auto-select MIME type
+      timeSlice: 3000,
       ondataavailable: async (blob: Blob) => {
         if (blob && blob.size > 0) {
           console.log('Chunk received. Blob size:', blob.size);
-
-          // Save each chunk to IndexedDB
           await this.savePartToDB(blob);
         }
       },
     });
 
-    console.log('Recorder started.');
+    console.log('Recorder started with MIME type:', mimeType);
     this.recorder.startRecording();
   }
 
@@ -210,7 +228,6 @@ export class AppComponent implements OnInit {
     // Start saving chunks
     saveChunk();
   }
-
   async stopRecording() {
     this.isRecording = false;
 
@@ -221,24 +238,39 @@ export class AppComponent implements OnInit {
         // Retrieve all parts from IndexedDB
         const allParts = await this.getAllPartsFromDB();
 
-        allParts.forEach((blob, index) => {
-          console.log(`Part ${index}: Size: ${blob.size}, MIME: ${blob.type}`);
-        });
-        console.log(allParts);
-        // Combine all valid parts into a single Blob
         if (allParts.length === 0) {
           console.error('No valid parts available to combine.');
           return;
         }
 
-        const fullRecording = new Blob(allParts, { type: 'video/webm' });
+        // 📌 Ensure Correct MIME Type
+        const isSafari = /^((?!chrome|android).)*safari/i.test(
+          navigator.userAgent
+        );
+        const mimeType = isSafari ? 'video/mp4' : 'video/webm;codecs=vp8';
+
+        const fullRecording = new Blob(allParts, { type: mimeType });
 
         console.log('Combined Blob size:', fullRecording.size);
 
-        // Generate a URL for the combined Blob
+        // ✅ Instead of setting a Blob URL (which Safari doesn't support), we download it
         const videoURL = URL.createObjectURL(fullRecording);
 
-        // Update the preview video element
+        // 🚨 Safari Fix: Force Download Instead of Playing
+        if (isSafari) {
+          console.warn(
+            'Safari detected - downloading video instead of previewing.'
+          );
+          const a = document.createElement('a');
+          a.href = videoURL;
+          a.download = 'recorded-video.mp4';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          return;
+        }
+
+        // ✅ Set the preview video element for Chrome/Firefox
         const previewVideo = this.previewVideoElement.nativeElement;
         previewVideo.src = videoURL;
         previewVideo.load();
