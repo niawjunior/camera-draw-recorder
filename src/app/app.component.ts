@@ -33,9 +33,12 @@ export class AppComponent implements OnInit {
   remoteVideoElement!: ElementRef<HTMLVideoElement>;
   userIdToCall: string = ''; // Input for calling user ID
   isMuted = false; // Mute toggle state
-
+  isRendering = false;
   @ViewChild('video', { static: true })
   videoElement!: ElementRef<HTMLVideoElement>;
+
+  @ViewChild('recordingCanvas', { static: true })
+  recordingCanvasElement!: ElementRef<HTMLCanvasElement>;
   @ViewChild('videoCanvas', { static: true })
   videoCanvasElement!: ElementRef<HTMLCanvasElement>;
   @ViewChild('drawingCanvas', { static: true })
@@ -232,58 +235,70 @@ export class AppComponent implements OnInit {
     const drawingCanvas = this.drawingCanvasElement.nativeElement;
     const drawingContext = drawingCanvas.getContext('2d')!;
 
-    videoCanvas.width = 640;
-    videoCanvas.height = 480;
+    // ✅ Use a separate recording canvas to prevent duplication issues
+    const recordingCanvas = this.recordingCanvasElement.nativeElement;
+    const recordingContext = recordingCanvas.getContext('2d')!;
+
+    // Ensure both canvases have the same dimensions
+    videoCanvas.width = recordingCanvas.width = 640;
+    videoCanvas.height = recordingCanvas.height = 480;
 
     const localVideo = this.videoElement.nativeElement;
     const remoteVideo = this.remoteVideoElement.nativeElement;
 
-    // 🔥 FIX: Disable direct rendering on drawing canvas during recording
-    drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-
     const renderFrame = () => {
-      // ✅ FIX: Clear the video canvas first to prevent overlapping frames
-      videoContext.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+      // ✅ CLEAR the recording canvas before drawing
+      recordingContext.clearRect(
+        0,
+        0,
+        recordingCanvas.width,
+        recordingCanvas.height
+      );
 
-      // ✅ Draw Local Video (Full Size)
-      videoContext.drawImage(
+      // ✅ Draw Local Video (Full Screen)
+      recordingContext.drawImage(
         localVideo,
         0,
         0,
-        videoCanvas.width,
-        videoCanvas.height
+        recordingCanvas.width,
+        recordingCanvas.height
       );
 
-      // ✅ Draw Remote Video (Small - Top Right)
-      const smallVideoWidth = 160;
-      const smallVideoHeight = 120;
-      videoContext.drawImage(
-        remoteVideo,
-        videoCanvas.width - smallVideoWidth - 10,
-        10,
-        smallVideoWidth,
-        smallVideoHeight
-      );
+      // ✅ Ensure Remote Video is Loaded Before Drawing
+      if (remoteVideo.readyState >= 2) {
+        const smallVideoWidth = 160;
+        const smallVideoHeight = 120;
+        recordingContext.drawImage(
+          remoteVideo,
+          recordingCanvas.width - smallVideoWidth - 10,
+          10,
+          smallVideoWidth,
+          smallVideoHeight
+        );
+      }
 
-      // ✅ FIX: Draw the drawing canvas **only once** onto the video canvas
-      videoContext.drawImage(
+      // ✅ Draw the Drawing Canvas LAST
+      recordingContext.drawImage(
         drawingCanvas,
         0,
         0,
-        videoCanvas.width,
-        videoCanvas.height
+        recordingCanvas.width,
+        recordingCanvas.height
       );
 
       requestAnimationFrame(renderFrame);
     };
 
-    renderFrame();
+    // ✅ Prevent multiple render loops
+    if (!this.isRendering) {
+      this.isRendering = true;
+      renderFrame();
+    }
 
-    // 🎙️ Mix Audio Streams
+    // 🎙️ Capture Mixed Audio
     const micStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
     });
-
     let finalStream;
     if (this.localStream && this.remoteStream) {
       const mixedAudioStream = this.audioContext.createMediaStreamDestination();
@@ -298,16 +313,17 @@ export class AppComponent implements OnInit {
       remoteAudio.connect(mixedAudioStream);
 
       finalStream = new MediaStream([
-        ...videoCanvas.captureStream().getVideoTracks(),
+        ...recordingCanvas.captureStream().getVideoTracks(),
         ...mixedAudioStream.stream.getAudioTracks(),
       ]);
     } else {
       finalStream = new MediaStream([
-        ...videoCanvas.captureStream().getVideoTracks(),
+        ...recordingCanvas.captureStream().getVideoTracks(),
         ...micStream.getTracks(),
       ]);
     }
 
+    // 🎥 Start Recording from `recordingCanvas`
     this.recorder = new RecordRTC(finalStream, {
       type: 'video',
       mimeType: 'video/webm;codecs=vp8',
