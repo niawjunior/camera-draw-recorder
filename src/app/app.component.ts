@@ -139,7 +139,7 @@ export class AppComponent implements OnInit {
     drawFrame();
   }
 
-  startRecording() {
+  async startRecording() {
     this.isRecording = true;
     const videoCanvas = this.videoCanvasElement.nativeElement;
     const drawingCanvas = this.drawingCanvasElement.nativeElement;
@@ -159,7 +159,14 @@ export class AppComponent implements OnInit {
     mergeLayers();
 
     // Capture combined canvas stream for recording
-    const combinedStream = combinedCanvas.captureStream();
+    const videoStream = combinedCanvas.captureStream();
+    const audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+    });
+    const combinedStream = new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...audioStream.getAudioTracks(),
+    ]);
 
     // Set up the recorder with `ondataavailable`
     this.recorder = new RecordRTC(combinedStream, {
