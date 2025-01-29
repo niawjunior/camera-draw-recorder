@@ -93,7 +93,7 @@ export class AppComponent implements OnInit {
 
   initializeCamera() {
     navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
+      .getUserMedia({ video: true, audio: false })
       .then((stream) => {
         this.stream = stream;
 
@@ -158,14 +158,16 @@ export class AppComponent implements OnInit {
     };
     mergeLayers();
 
-    // 🎙️ Capture audio from microphone
+    // 🎙️ Capture Audio from Microphone
     const audioStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
     });
 
-    let videoStream: MediaStream;
+    // 🌍 Detect Safari
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
-    // 🚨 Safari Fix: Check if `captureStream()` is supported
+    // 🖥️ Capture Video Stream
+    let videoStream: MediaStream;
     if (typeof combinedCanvas.captureStream === 'function') {
       videoStream = combinedCanvas.captureStream();
     } else {
@@ -174,24 +176,29 @@ export class AppComponent implements OnInit {
         if (blob) {
           this.savePartToDB(blob);
         }
-      }, 'video/mp4'); // Fallback to MP4
+      }, 'video/mp4');
       return;
     }
 
-    // ✅ Merge video & audio streams
+    // ✅ Synchronize Audio with Video Using AudioContext (Fix for Safari)
+    const audioContext = new AudioContext();
+    const mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
+    const destination = audioContext.createMediaStreamDestination();
+    mediaStreamSource.connect(destination);
+
+    // ✅ Merge Video & Audio Streams
     const combinedStream = new MediaStream([
       ...videoStream.getVideoTracks(),
-      ...audioStream.getAudioTracks(),
+      ...destination.stream.getAudioTracks(),
     ]);
 
-    // ✅ Use different MIME types for Safari & Chrome/Firefox
-    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    // ✅ Use correct MIME type
     const mimeType = isSafari ? 'video/mp4' : 'video/webm;codecs=vp8';
 
-    // ✅ Initialize the recorder
+    // ✅ Initialize Recorder
     this.recorder = new RecordRTC(combinedStream, {
       type: 'video',
-      mimeType, // ✅ Auto-select MIME type
+      mimeType,
       timeSlice: 3000,
       ondataavailable: async (blob: Blob) => {
         if (blob && blob.size > 0) {
@@ -258,23 +265,25 @@ export class AppComponent implements OnInit {
 
         // 🚨 Safari Fix: Force Download Instead of Playing
         if (isSafari) {
-          console.warn(
-            'Safari detected - downloading video instead of previewing.'
-          );
-          const a = document.createElement('a');
-          a.href = videoURL;
-          a.download = 'recorded-video.mp4';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          return;
-        }
+          // ✅ Create a MediaStream from the recorded Blob
+          const stream = new MediaSource();
+          const previewVideo = this.previewVideoElement.nativeElement;
+          previewVideo.srcObject = stream; // ✅ Use `srcObject` instead of Blob URL
 
-        // ✅ Set the preview video element for Chrome/Firefox
-        const previewVideo = this.previewVideoElement.nativeElement;
-        previewVideo.src = videoURL;
-        previewVideo.load();
-        previewVideo.play();
+          stream.addEventListener('sourceopen', async () => {
+            const sourceBuffer = stream.addSourceBuffer(mimeType);
+            sourceBuffer.appendBuffer(await fullRecording.arrayBuffer());
+          });
+
+          previewVideo.load();
+          previewVideo.play();
+        } else {
+          // ✅ Set the preview video element for Chrome/Firefox
+          const previewVideo = this.previewVideoElement.nativeElement;
+          previewVideo.src = videoURL;
+          previewVideo.load();
+          previewVideo.play();
+        }
 
         console.log('Preview updated with the combined video.');
       });
@@ -512,11 +521,14 @@ export class AppComponent implements OnInit {
 
     // Capture the combined canvas stream for the new recorder
     const combinedStream = combinedCanvas.captureStream();
-
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const mimeType = isSafari
+      ? 'video/webm;codecs=h264'
+      : 'video/webm;codecs=vp8';
     // Create a new recorder instance and attach the `ondataavailable` handler
     this.recorder = new RecordRTC(combinedStream, {
       type: 'video',
-      mimeType: 'video/webm;codecs=vp8',
+      mimeType,
       timeSlice: 3000, // Capture chunks every second
       ondataavailable: async (blob: Blob) => {
         if (blob && blob.size > 0) {
